@@ -8,6 +8,9 @@
 #define BUFFER_SIZE 1024
 #define TAR_EOF
 
+//this value determines the max block size used for copying the file. a value of 64 will translate to 32k.
+#define COPY_BLOCK_SIZE 64
+
 typedef struct {
     char ustar[6];
     char ustarVersion[2];
@@ -97,6 +100,7 @@ string_clusters_t **end_strings;
 
 //io buffer
 char buffer[BUFFER_SIZE];
+char copy_buffer[BLOCK_SIZE*COPY_BLOCK_SIZE];
 
 // The actual clean function
 int cleanTwrpTar();
@@ -940,46 +944,47 @@ int copyBlocks(int start_bpos, int end_bpos, int block_offset)
     int num_blocks_copy = end_bpos - start_bpos + 1;
 
     //copy the blocks, pairs at a time.
-    for (int i = 0; i < num_blocks_copy/2; i++){
-        int read_size = fread(buffer, 1, BLOCK_SIZE*2, input_file);
+    for (int i = 0; i < num_blocks_copy/COPY_BLOCK_SIZE; i++){
+        int read_size = fread(copy_buffer, 1, BLOCK_SIZE*COPY_BLOCK_SIZE, input_file);
         if (ferror(input_file)) {
             printf("Reading error\n");
             exit(1);
         }
-        input_bpos += 2;
+        input_bpos += COPY_BLOCK_SIZE;
 
-        fwrite(buffer, sizeof(char), read_size, output_file);
+        fwrite(copy_buffer, sizeof(char), read_size, output_file);
         if (ferror(output_file)) {
             printf("Output file error\n");
             exit(1);
         }
-        output_bpos += 2;
+        output_bpos += COPY_BLOCK_SIZE;
 
         //exit early if unexpected EOF
         if (feof(input_file)){
-            return i*2+read_size/2;
+            return i*COPY_BLOCK_SIZE + read_size/BLOCK_SIZE;
         }
 
     }
-    //if there are an odd number of blocks to copy, copy the last one.
-    if (num_blocks_copy % 2){
-        int read_size = fread(buffer, 1, BLOCK_SIZE, input_file);
+
+    //if there are additional blocks to copy, copy them.
+    if (num_blocks_copy%COPY_BLOCK_SIZE != 0){
+        int read_size = fread(copy_buffer, 1, (num_blocks_copy%COPY_BLOCK_SIZE)*BLOCK_SIZE, input_file);
         if (ferror(input_file)) {
             printf("Reading error\n");
             exit(1);
         }
-        input_bpos++;
+        input_bpos += num_blocks_copy%COPY_BLOCK_SIZE;
 
-        fwrite(buffer, sizeof(char), read_size, output_file);
+        fwrite(copy_buffer, sizeof(char), read_size, output_file);
         if (ferror(output_file)) {
             printf("Output file error\n");
             exit(1);
         }
-        output_bpos++;
+        output_bpos += num_blocks_copy%COPY_BLOCK_SIZE;
 
         //exit early if unexpected EOF
         if (feof(input_file)){
-            return num_blocks_copy-1;
+            return num_blocks_copy - num_blocks_copy%COPY_BLOCK_SIZE + read_size/BLOCK_SIZE;
         }
     }
 
