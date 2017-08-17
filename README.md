@@ -8,7 +8,7 @@ Creating a program like this was also used as a challenge to my friend who I hel
 * 50 points for the program successfully cleaning the file
 * 20 points for whichever program is more flexible/extensible
 
-As of right now, the programs have not been compared, so he is at a 20 point lead for finishing 2 days ahead of me.
+As of right now, the programs have not been compared, so he is at a 20 point lead for finishing 2 days ahead of me (declared finished at commit [e1b2a45](https://github.com/venerjoel99/TarProject/tree/e1b2a454f936778193803d35e5b190036bf11f2a)).
 
 ## Compiler information
 Just make sure you compile with the C11 standard. I did my best to keep everything within the standard.
