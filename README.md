@@ -10,6 +10,8 @@ Creating a program like this was also used as a challenge to my friend who I hel
 
 As of right now, the programs have not been compared, so he is at a 50 point lead for finishing 5 days ahead of me (declared finished at commit [e1b2a45](https://github.com/venerjoel99/TarProject/tree/e1b2a454f936778193803d35e5b190036bf11f2a)).
 
+I have declared finished at commit [326cbfc](https://github.com/BuildingAtom/CleanTwrpTar/tree/326cbfc3d2ae77b2e0735043cc2ca84cb46d0ebd).
+
 ## Compiler information
 Just make sure you compile with the C11 standard. I did my best to keep everything within the standard.
 
