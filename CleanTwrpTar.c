@@ -47,9 +47,9 @@ typedef struct {
 
 // Known Leaked Strings
 const char *leaked_strings[] = { "storing xattr user.default\n",
-    "storing xattr user.inode_cache\n", "storing xattr user.inode_code_cache\n", NULL };
+    "storing xattr user.inode_cache\n", "storing xattr user.inode_code_cache\n", "I:Closing tar\n", NULL };
 
-// Check for these specific leaked strings towards the end of the file. (last 2048 bytes)
+// Check for these specific leaked strings towards the end of the file before the above. (last file)
 const char *leaked_strings_end[] = { "I:Closing tar\n", NULL };
 
 // Additional Strings Stuff (note these strings are not null terminated!)
@@ -70,13 +70,13 @@ const char strings_file_header[8] = {'T','C','9','9','\0','\0','\0','\n'};
 #define HELP_MESSAGE "this is the help message \n"
 
 //Variables and flags
-bool verbose = false; // -v --verbose
-bool ask_in_files = false; // -a --ask
-bool ignore_in_files = false; // -i --ignore
-bool search_for_new_strings = false; // -n --search-for-new
-FILE *input_file = NULL; //first argument
-FILE *output_file = NULL; //second argument
-FILE *strings_file = NULL; //-s [file] --strings-file
+bool verbose = false;                   // -v --verbose             || Half setup
+bool ask_in_files = false;              // -a --ask                 || Not Done
+bool ignore_in_files = false;           // -i --ignore              || Not Done (either copyblocks function needs modification, or a new function needs to be made to copy extra bytes.)
+bool search_for_new_strings = false;    // -n --search-for-new      || Barely done
+FILE *input_file = NULL;                //first argument            || Done
+FILE *output_file = NULL;               //second argument           || Done
+FILE *strings_file = NULL;              //-s [file] --strings-file  || Done
 
 //Used when an overall offset is required (in bytes).
 int global_offset = 0;
@@ -120,6 +120,8 @@ int searchNewStrings(int size_found);
 int endFileCheck();
 // Copy from input file to output file given starting block position, ending block position (copied), and offset of start
 int copyBlocks(int start_bpos, int end_bpos, int block_offset);
+// write EOF blocks. Begins write at indicated star position (inclusive)
+void writeEOF(int start_bpos, int block_offset);
 
 int main(int argc, char **argv)
 {
@@ -336,12 +338,12 @@ int cleanTwrpTar()
         int copied = copyBlocks(current_bpos, header_info.header_bpos, header_info.offset);
         if (copied != blocks_to_copy) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
-        printf("Block Position: %d\tNext: %d\tSize: %d (%d blocks)\nOffset: %d\tGlobal Offset: %d\nSize of strings found in before header: %d\nString clusters found in file: %d (Size: %d)\nNew string stringcluster size: %d\n\n",
+        if (verbose) printf("Block Position: %d\tNext: %d\tSize: %d (%d blocks)\nOffset: %d\tGlobal Offset: %d\nSize of strings found in before header: %d\nString clusters found in file: %d (Size: %d)\nNew string stringcluster size: %d\n\n",
                header_info.header_bpos, header_info.next_header_bpos, header_info.filesize, header_info.number_of_blocks, header_info.offset, global_offset, size_found_pre_header,
                string_clusters, total_found_inside, searchNewStrings(size_found_pre_header+total_found_inside));
     }
     if (offset == -1){
-        printf("Assumed Proper EOF. Performing End File Check.\n");
+        if (verbose) printf("Assumed Proper EOF. Performing End File Check.\n");
         int string_clusters = endFileCheck();
 
         //since now header_info refers to the last header before the end, and header_info.next_header_bpos should refer to the 2 NULL blocks for EOF
@@ -365,16 +367,46 @@ int cleanTwrpTar()
         int copied = copyBlocks(current_bpos, header_info.next_header_bpos+1, total_found_inside);
         if (copied != blocks_to_copy) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
-        printf("Found %d string clusters (Size: %d)\n", string_clusters, total_found_inside);
+        if (verbose) printf("Found %d string clusters (Size: %d)\n", string_clusters, total_found_inside);
+
+        printf("Completed Successfully!");
+
         return 0;
     }
     if (offset == -2){
         printf("Possibly Improper EOF. Block Position of last header is %d.", header_info.header_bpos);
+        int string_clusters = endFileCheck();
+
+        //since now header_info refers to the last header before the end, and header_info.next_header_bpos should refer to the 2 NULL blocks for EOF
+        int current_bpos = header_info.header_bpos+1;
+        int total_found_inside = 0;
+        for (int i=0; i<string_clusters; i++){
+            int blocks_to_copy = end_strings[i]->start_bpos - current_bpos;
+            //edge case for beginning
+            if (blocks_to_copy == 0){
+                total_found_inside += end_strings[i]->length;
+                continue;
+            }
+            int copied = copyBlocks(current_bpos, end_strings[i]->start_bpos-1, total_found_inside);
+            if (blocks_to_copy != copied) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
+
+            current_bpos = end_strings[i]->start_bpos;
+            total_found_inside += end_strings[i]->length;
+        }
+
+        int blocks_to_copy = header_info.next_header_bpos-current_bpos+2;
+        int copied = copyBlocks(current_bpos, header_info.next_header_bpos+1, total_found_inside);
+        if (copied != blocks_to_copy) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
+
+        if (verbose) printf("Found %d string clusters (Size: %d)\n", string_clusters, total_found_inside);
+
+        writeEOF(header_info.next_header_bpos, 0);
+
         return -1;
     }
 
-
-    return 0;
+    //Something had to go wrong for it to get here.
+    return -1;
 }
 
 //Scan for the next header (assuming offset can never be negative).
@@ -407,7 +439,7 @@ int nextHeaderOffset()
     }
     if (read_size != BLOCK_SIZE*2) {
         if (feof(input_file)){
-            printf("Warning: Unexpected end of file. Filling in null bytes and closing file.\n");
+            if (verbose) printf("Warning: Unexpected end of file. Filling in null bytes and closing file.\n");
             return -2;
         }else{
             printf("Reading error\n");
@@ -845,12 +877,14 @@ int endFileCheck()
         int last_searchoffset = -1;
         while (last_searchoffset != searchoffset){
             last_searchoffset = searchoffset;
-            for (int i = 0; leaked_strings[i] != NULL; i++){
-                int temp_stringlen = strlen(leaked_strings[i]);
+
+            //added loop. having a separate function really would've been more elegant, but again, I didn't want to make any more functions
+            for (int i = 0; leaked_strings_end[i] != NULL; i++){
+                int temp_stringlen = strlen(leaked_strings_end[i]);
 
                 //check for string
                 for (int x = 0; x < temp_stringlen; x++)
-                    if (buffer[x+searchoffset] != leaked_strings[i][x]){
+                    if (buffer[x+searchoffset] != leaked_strings_end[i][x]){
                         temp_stringlen = 0; //string not found
                         break;
                     }
@@ -863,13 +897,12 @@ int endFileCheck()
 
             if (last_searchoffset != searchoffset) continue;
 
-            //added loop. having a separate function really would've been more elegant, but again, I didn't want to make any more functions
-            for (int i = 0; leaked_strings_end[i] != NULL; i++){
-                int temp_stringlen = strlen(leaked_strings_end[i]);
+            for (int i = 0; leaked_strings[i] != NULL; i++){
+                int temp_stringlen = strlen(leaked_strings[i]);
 
                 //check for string
                 for (int x = 0; x < temp_stringlen; x++)
-                    if (buffer[x+searchoffset] != leaked_strings_end[i][x]){
+                    if (buffer[x+searchoffset] != leaked_strings[i][x]){
                         temp_stringlen = 0; //string not found
                         break;
                     }
@@ -992,4 +1025,25 @@ int copyBlocks(int start_bpos, int end_bpos, int block_offset)
     fflush(output_file);
 
     return num_blocks_copy;
+}
+
+//write EOF
+void writeEOF(int start_bpos, int block_offset)
+{
+    //set output position
+    fseek(output_file, start_bpos*BLOCK_SIZE+block_offset, SEEK_SET);
+    output_bpos = start_bpos;
+
+    char null_bytes[1024] = { '\0' };
+
+    fwrite(null_bytes, sizeof(char), 1024, output_file);
+    if (ferror(output_file)) {
+        printf("Output file error\n");
+        exit(1);
+    }
+
+    //write changes in output file buffer to file.
+    fflush(output_file);
+
+    output_bpos += 2;
 }
