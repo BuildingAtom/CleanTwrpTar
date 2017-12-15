@@ -80,6 +80,7 @@ FILE *strings_file = NULL;              //-s [file] --strings-file  || Done
 
 //Used when an overall offset is required (in bytes).
 int global_offset = 0;
+int output_offset = 0;  //Changes only when ignore in files or ask in files is called.
 
 // Positioning numbers (in blocks)
 int input_bpos = 0;
@@ -119,7 +120,7 @@ int searchNewStrings(int size_found);
 // For the end of the file, perform this function to check and everything. It will check any specific end strings
 int endFileCheck();
 // Copy from input file to output file given starting block position, ending block position (copied), and offset of start
-int copyBlocks(int start_bpos, int end_bpos, int block_offset);
+int copyBlocks(int start_bpos, int end_bpos, int block_offset, int extra_bytes);
 // write EOF blocks. Begins write at indicated star position (inclusive)
 void writeEOF(int start_bpos, int block_offset);
 
@@ -302,7 +303,7 @@ int cleanTwrpTar()
     while ((offset = nextHeaderOffset()) >= 0){
         if (offset == 0){
             int blocks_to_copy = header_info.header_bpos-header_info.last_header_bpos;
-            int copied = copyBlocks(header_info.last_header_bpos+1, header_info.header_bpos, 0);
+            int copied = copyBlocks(header_info.last_header_bpos+1, header_info.header_bpos, 0, 0);
             if (blocks_to_copy != copied) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
             continue;
         }
@@ -319,23 +320,23 @@ int cleanTwrpTar()
                 total_found_inside += found_strings[i]->length;
                 continue;
             }
-            int copied = copyBlocks(current_bpos, found_strings[i]->start_bpos-1, total_found_inside);
+            int copied = copyBlocks(current_bpos, found_strings[i]->start_bpos-1, total_found_inside, 0);
             if (blocks_to_copy != copied) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
             current_bpos = found_strings[i]->start_bpos;
 
             total_found_inside += found_strings[i]->length;
-            printf("start_bpos: %d\tlength:%d\n", found_strings[i]->start_bpos, found_strings[i]->length);
+            //printf("start_bpos: %d\tlength:%d\n", found_strings[i]->start_bpos, found_strings[i]->length);
         }
         if (size_found_pre_header != 0){
             int blocks_to_copy = header_info.header_bpos-current_bpos;
-            int copied = copyBlocks(current_bpos, header_info.header_bpos-1, total_found_inside);
+            int copied = copyBlocks(current_bpos, header_info.header_bpos-1, total_found_inside, 0);
             if (blocks_to_copy != copied) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
             current_bpos = header_info.header_bpos;
         }
 
         int blocks_to_copy = header_info.header_bpos-current_bpos+1;
-        int copied = copyBlocks(current_bpos, header_info.header_bpos, header_info.offset);
+        int copied = copyBlocks(current_bpos, header_info.header_bpos, header_info.offset, 0);
         if (copied != blocks_to_copy) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
         if (verbose) printf("Block Position: %d\tNext: %d\tSize: %d (%d blocks)\nOffset: %d\tGlobal Offset: %d\nSize of strings found in before header: %d\nString clusters found in file: %d (Size: %d)\nNew string stringcluster size: %d\n\n",
@@ -356,7 +357,7 @@ int cleanTwrpTar()
                 total_found_inside += end_strings[i]->length;
                 continue;
             }
-            int copied = copyBlocks(current_bpos, end_strings[i]->start_bpos-1, total_found_inside);
+            int copied = copyBlocks(current_bpos, end_strings[i]->start_bpos-1, total_found_inside, 0);
             if (blocks_to_copy != copied) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
             current_bpos = end_strings[i]->start_bpos;
@@ -364,7 +365,7 @@ int cleanTwrpTar()
         }
 
         int blocks_to_copy = header_info.next_header_bpos-current_bpos+2;
-        int copied = copyBlocks(current_bpos, header_info.next_header_bpos+1, total_found_inside);
+        int copied = copyBlocks(current_bpos, header_info.next_header_bpos+1, total_found_inside, 0);
         if (copied != blocks_to_copy) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
         if (verbose) printf("Found %d string clusters (Size: %d)\n", string_clusters, total_found_inside);
@@ -387,7 +388,7 @@ int cleanTwrpTar()
                 total_found_inside += end_strings[i]->length;
                 continue;
             }
-            int copied = copyBlocks(current_bpos, end_strings[i]->start_bpos-1, total_found_inside);
+            int copied = copyBlocks(current_bpos, end_strings[i]->start_bpos-1, total_found_inside, 0);
             if (blocks_to_copy != copied) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
             current_bpos = end_strings[i]->start_bpos;
@@ -395,7 +396,7 @@ int cleanTwrpTar()
         }
 
         int blocks_to_copy = header_info.next_header_bpos-current_bpos+2;
-        int copied = copyBlocks(current_bpos, header_info.next_header_bpos+1, total_found_inside);
+        int copied = copyBlocks(current_bpos, header_info.next_header_bpos+1, total_found_inside, 0);
         if (copied != blocks_to_copy) printf("Copied %d blocks of %d\n", copied, blocks_to_copy);
 
         if (verbose) printf("Found %d string clusters (Size: %d)\n", string_clusters, total_found_inside);
@@ -964,15 +965,20 @@ int endFileCheck()
 // NOTE: this DOES use the global offset value. This means that if nextHeaderOffset is called, this can't be used anymore.
 // If I ever recode this better, I'll actually make it possible to use in a library. For now, I'm getting the function and the algorithms.
 // returns # of blocks fully copied.
-int copyBlocks(int start_bpos, int end_bpos, int block_offset)
+int copyBlocks(int start_bpos, int end_bpos, int block_offset, int extra_bytes)
 {
     //set the input position
     fseek(input_file, start_bpos*BLOCK_SIZE+global_offset+block_offset, SEEK_SET);
     input_bpos = start_bpos;
 
     //set the output position
-    fseek(output_file, start_bpos*BLOCK_SIZE, SEEK_SET);
-    output_bpos = start_bpos;
+    if (ignore_in_files){
+        fseek(output_file, start_bpos*BLOCK_SIZE+output_offset, SEEK_SET);
+        output_bpos = start_bpos;
+    } else{
+        fseek(output_file, start_bpos*BLOCK_SIZE, SEEK_SET);
+        output_bpos = start_bpos;
+    }
 
     int num_blocks_copy = end_bpos - start_bpos + 1;
 
@@ -999,9 +1005,9 @@ int copyBlocks(int start_bpos, int end_bpos, int block_offset)
 
     }
 
-    //if there are additional blocks to copy, copy them.
-    if (num_blocks_copy%COPY_BLOCK_SIZE != 0){
-        int read_size = fread(copy_buffer, 1, (num_blocks_copy%COPY_BLOCK_SIZE)*BLOCK_SIZE, input_file);
+    //if there are additional blocks or data to copy, copy them.
+    if (num_blocks_copy%COPY_BLOCK_SIZE != 0 && extra_bytes != 0){
+        int read_size = fread(copy_buffer, 1, (num_blocks_copy%COPY_BLOCK_SIZE)*BLOCK_SIZE+extra_bytes, input_file);
         if (ferror(input_file)) {
             printf("Reading error\n");
             exit(1);
@@ -1034,9 +1040,9 @@ void writeEOF(int start_bpos, int block_offset)
     fseek(output_file, start_bpos*BLOCK_SIZE+block_offset, SEEK_SET);
     output_bpos = start_bpos;
 
-    char null_bytes[1024] = { '\0' };
+    char null_bytes[BLOCK_SIZE*2] = { '\0' };
 
-    fwrite(null_bytes, sizeof(char), 1024, output_file);
+    fwrite(null_bytes, sizeof(char), BLOCK_SIZE*2, output_file);
     if (ferror(output_file)) {
         printf("Output file error\n");
         exit(1);
